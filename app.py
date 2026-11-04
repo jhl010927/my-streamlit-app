@@ -61,6 +61,94 @@ if submit:
             input=input_messages
         )
         answer = response.output_text
+  # 회의 내용을 화이트보드 항목으로 받기 위한 출력 형식
+board_schema = {
+    "type": "json_schema",
+    "name": "meeting_whiteboard",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "회의요약": {"type": "string"},
+            "논의주제": {"type": "array", "items": {"type": "string"}},
+            "결정사항": {"type": "array", "items": {"type": "string"}},
+            "업무목록": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "업무": {"type": "string"},
+                        "담당자": {"type": ["string", "null"]},
+                        "기한": {"type": ["string", "null"]}
+                    },
+                    "required": ["업무", "담당자", "기한"],
+                    "additionalProperties": False
+                }
+            },
+            "미결사항": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["회의요약", "논의주제", "결정사항", "업무목록", "미결사항"],
+        "additionalProperties": False
+    }
+}
+
+# 회의 내용을 구조화된 형식으로 AI에 요청
+request["text"] = {"format": board_schema}
+response = client.responses.create(**request)
+board = json.loads(response.output_text)
+
+# 화이트보드 항목 표시
+st.subheader("회의 화이트보드")
+st.info(board["회의요약"])
+
+col1, col2 = st.columns(2)
+
+with col1:
+    with st.container(border=True):
+        st.markdown("### 논의 주제")
+        for item in board["논의주제"]:
+            st.markdown(f"- {item}")
+
+    with st.container(border=True):
+        st.markdown("### 결정사항")
+        for item in board["결정사항"]:
+            st.markdown(f"- {item}")
+
+with col2:
+    with st.container(border=True):
+        st.markdown("### 해야 할 일")
+        st.table(board["업무목록"])
+
+    with st.container(border=True):
+        st.markdown("### 미결사항")
+        for item in board["미결사항"]:
+            st.markdown(f"- {item}")
+
+# 정리된 회의 내용을 화이트보드 PNG로 생성
+board_for_image = json.dumps(board, ensure_ascii=False, indent=2)
+
+image_prompt = f"""
+회의 내용을 정리한 화이트보드 사진을 만들어 주세요.
+깔끔한 회의실 화이트보드에 제목과 항목을 보기 좋게 배치하세요.
+아래 한국어 내용을 바꾸거나 새로 추가하지 마세요.
+
+{board_for_image}
+"""
+
+image_response = client.images.generate(
+    model="gpt-image-1-mini",
+    prompt=image_prompt,
+    size="1024x1024"
+)
+
+image_bytes = base64.b64decode(image_response.data[0].b64_json)
+
+st.image(image_bytes, caption="AI가 생성한 회의 화이트보드")
+st.download_button(
+    "화이트보드 PNG 다운로드",
+    data=image_bytes,
+    file_name="회의_화이트보드.png",
+    mime="image/png"
+)
 
         # 응답 출력
         st.subheader("AI 답변")
