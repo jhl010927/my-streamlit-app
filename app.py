@@ -1,67 +1,21 @@
 
-import os, base64, json, requests
+import base64
+import json
+
 import streamlit as st
 from openai import OpenAI
 
-# OpenAI 클라이언트 생성
 client = OpenAI()
 
-# 페이지 설정
 st.set_page_config(page_title="음성 AI 서비스", page_icon="🤖", layout="wide")
 st.title("음성 인식 AI 서비스")
-st.write("음성으로 질문하시면 답변해 드립니다.")
+st.write("회의 녹음을 회의록과 화이트보드 이미지로 정리합니다.")
 
-# 역할 지정
 sys_role = """
-당신은 다양한 업무를 처리하는 AI 서비스입니다.
-개인 비서처럼 친절하게 응대합니다.
+당신은 회의 내용을 정리하는 AI 비서입니다.
+녹음과 입력된 자료에 있는 내용만 사용하고, 확인되지 않은 내용은 추측하지 않습니다.
 """
 
-# 상태 초기화
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# 지시 영역
-with st.form("task_form"):
-    uploaded_file = st.file_uploader("텍스트 파일 업로드", type=["txt"])
-    audio_value = st.audio_input("무엇을 도와드릴까요?")
-    submit = st.form_submit_button("실행")
-
-# 버튼을 눌렀을 때만 실행
-if submit:
-    # 업로드 된 파일이 있으면 디코딩
-    text = ""
-    if uploaded_file is not None:
-        text = uploaded_file.read().decode("utf-8")
-
-    # 녹음이 없으면 녹음 요청
-    if audio_value is None:
-        st.warning("음성을 녹음해주세요.")
-        st.stop()
-
-    # 시스템 메세지
-    system_content = sys_role
-    if text:
-        system_content += f"\n\n다음 내용을 참고하세요:\n{text}"
-    input_messages = [{"role": "system", "content": system_content}]
-
-    # STT: 음성 → 텍스트
-    transcript = client.audio.transcriptions.create(
-        model="whisper-1",
-        file=("audio.wav", audio_value, "audio/wav"))
-
-    # 사용자 메시지
-    input_messages.append({"role": "user", "content": transcript.text})
-
-    # LLM 호출 및 응답 듣기
-    with st.spinner("답변을 준비하고 있습니다..."):
-        # LLM 호출
-        response = client.responses.create(
-            model="gpt-4o-mini",
-            input=input_messages
-        )
-        answer = response.output_text
-  # 회의 내용을 화이트보드 항목으로 받기 위한 출력 형식
 board_schema = {
     "type": "json_schema",
     "name": "meeting_whiteboard",
@@ -86,70 +40,123 @@ board_schema = {
             },
             "미결사항": {"type": "array", "items": {"type": "string"}}
         },
-        "required": ["회의요약", "논의주제", "결정사항", "업무목록", "미결사항"],
+        "required": [
+            "회의요약", "논의주제", "결정사항", "업무목록", "미결사항"
+        ],
         "additionalProperties": False
     }
 }
 
-# 회의 내용을 구조화된 형식으로 AI에 요청
-request["text"] = {"format": board_schema}
-response = client.responses.create(**request)
-board = json.loads(response.output_text)
+with st.form("meeting_form"):
+    uploaded_file = st.file_uploader("회의 관련 텍스트 파일", type=["txt"])
+    audio_value = st.audio_input("회의 내용을 녹음하세요.")
+    submit = st.form_submit_button("회의 정리 및 화이트보드 만들기")
 
-# 화이트보드 항목 표시
-st.subheader("회의 화이트보드")
-st.info(board["회의요약"])
+if submit:
+    if audio_value is None:
+        st.warning("회의 내용을 녹음해 주세요.")
+        st.stop()
 
-col1, col2 = st.columns(2)
+    # 녹음 내용을 글자로 변환
+    with st.spinner("녹음 내용을 글자로 바꾸고 있습니다..."):
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=("audio.wav", audio_value.getvalue(), "audio/wav")
+        )
 
-with col1:
-    with st.container(border=True):
-        st.markdown("### 논의 주제")
-        for item in board["논의주제"]:
-            st.markdown(f"- {item}")
+    meeting_text = transcript.text
 
-    with st.container(border=True):
-        st.markdown("### 결정사항")
-        for item in board["결정사항"]:
-            st.markdown(f"- {item}")
+    # 업로드한 텍스트 파일이 있으면 회의 내용에 추가
+    if uploaded_file is not None:
+        file_text = uploaded_file.getvalue().decode("utf-8", errors="replace")
+        meeting_text += "\n\n추가 자료:\n" + file_text
 
-with col2:
-    with st.container(border=True):
-        st.markdown("### 해야 할 일")
-        st.table(board["업무목록"])
+    prompt = f"""
+다음 회의 내용을 정리하세요.
+회의 요약, 논의 주제, 결정사항, 해야 할 업무, 미결사항을 구분하세요.
+업무 담당자나 기한이 나오지 않았다면 null로 작성하세요.
 
-    with st.container(border=True):
-        st.markdown("### 미결사항")
-        for item in board["미결사항"]:
-            st.markdown(f"- {item}")
-
-# 정리된 회의 내용을 화이트보드 PNG로 생성
-board_for_image = json.dumps(board, ensure_ascii=False, indent=2)
-
-image_prompt = f"""
-회의 내용을 정리한 화이트보드 사진을 만들어 주세요.
-깔끔한 회의실 화이트보드에 제목과 항목을 보기 좋게 배치하세요.
-아래 한국어 내용을 바꾸거나 새로 추가하지 마세요.
-
-{board_for_image}
+회의 내용:
+{meeting_text}
 """
 
-image_response = client.images.generate(
-    model="gpt-image-1-mini",
-    prompt=image_prompt,
-    size="1024x1024"
-)
+    # 회의 내용을 항목별로 정리
+    with st.spinner("회의 내용을 정리하고 있습니다..."):
+        response = client.responses.create(
+            model="gpt-4o-mini",
+            input=[
+                {"role": "system", "content": sys_role},
+                {"role": "user", "content": prompt}
+            ],
+            text={"format": board_schema}
+        )
 
-image_bytes = base64.b64decode(image_response.data[0].b64_json)
+    board = json.loads(response.output_text)
 
-st.image(image_bytes, caption="AI가 생성한 회의 화이트보드")
-st.download_button(
-    "화이트보드 PNG 다운로드",
-    data=image_bytes,
-    file_name="회의_화이트보드.png",
-    mime="image/png"
-)
+    # 회의록 표시
+    st.subheader("회의 결과")
+    st.write("**회의 요약:**", board["회의요약"])
 
-        # 응답 출력
-        st.subheader("AI 답변")
-        st.write(answer)
+    col1, col2 = st.columns(2)
+
+    with col1:
+        with st.container(border=True):
+            st.markdown("### 논의 주제")
+            for item in board["논의주제"]:
+                st.markdown(f"- {item}")
+
+        with st.container(border=True):
+            st.markdown("### 결정사항")
+            for item in board["결정사항"]:
+                st.markdown(f"- {item}")
+
+    with col2:
+        with st.container(border=True):
+            st.markdown("### 해야 할 일")
+            if board["업무목록"]:
+                st.table(board["업무목록"])
+            else:
+                st.write("추출된 업무가 없습니다.")
+
+        with st.container(border=True):
+            st.markdown("### 미결사항")
+            for item in board["미결사항"]:
+                st.markdown(f"- {item}")
+
+    # 정리 결과를 TXT로 다운로드
+    minutes_text = json.dumps(board, ensure_ascii=False, indent=2)
+    st.download_button(
+        "회의록 TXT 다운로드",
+        data=minutes_text,
+        file_name="회의록.txt",
+        mime="text/plain"
+    )
+
+    # 정리된 회의 내용을 화이트보드 이미지로 생성
+    image_prompt = f"""
+회의 내용을 정리한 화이트보드 사진을 만들어 주세요.
+깔끔한 회의실 화이트보드에 제목과 항목을 보기 좋게 배치하세요.
+아래 한국어 내용을 바탕으로 만들고, 새로운 내용을 추가하지 마세요.
+
+{minutes_text}
+"""
+
+    try:
+        with st.spinner("화이트보드 이미지를 만들고 있습니다..."):
+            image_response = client.images.generate(
+                model="gpt-image-1-mini",
+                prompt=image_prompt,
+                size="1024x1024"
+            )
+
+        image_bytes = base64.b64decode(image_response.data[0].b64_json)
+        st.image(image_bytes, caption="AI가 생성한 회의 화이트보드")
+
+        st.download_button(
+            "화이트보드 PNG 다운로드",
+            data=image_bytes,
+            file_name="회의_화이트보드.png",
+            mime="image/png"
+        )
+    except Exception as e:
+        st.error(f"화이트보드 이미지 생성에 실패했습니다: {e}")
