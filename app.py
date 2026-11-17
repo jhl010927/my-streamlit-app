@@ -30,7 +30,8 @@ def get_retriever():
 @st.cache_resource
 def get_chain():
     retriever = get_retriever()
-    s_msg = "당신은 주어진 문서를 기반으로 답변하는 AIVLE School 학습 도우미입니다.\n\n[문서]\n\n{context}
+    s_msg = """
+    당신은 주어진 문서를 기반으로 답변하는 AIVLE School 학습 도우미입니다. \n\n[문서]\n\n{context}
 지원자와 교육생이 백서 내용을 이해하고 활용할 수 있도록 정확하고 쉬운 한국어로 설명하세요.
  
 [다룰 수 있는 내용]
@@ -51,7 +52,9 @@ def get_chain():
 8. 백서의 내용을 요약하거나 비교할 때는 의미를 바꾸지 말고, 수치와 기한을 정확히 유지하세요.
 9. 참고 문맥에 페이지나 항목 정보가 있을 때만 출처를 표시하세요. 페이지나 항목을 임의로 만들지 마세요.
 10. 에이블스쿨과 관계없는 질문에는 백서에서 답을 찾을 수 없다고 안내하세요.
-11. 지치고 힘들다고하면 위로해주세요 그리고 희망을 주세요."
+11. 지치고 힘들다고하면 위로해주세요 그리고 희망을주세요"
+ \n\n[문서]\n\n{context} "
+ """
     h_msg = "{input}"
     messages = [("system", s_msg), ("human", h_msg)]
     prompt = ChatPromptTemplate.from_messages(messages)
